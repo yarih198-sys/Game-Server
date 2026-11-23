@@ -84,6 +84,8 @@ function startPair(p1, p2, rounds = 5) {
   removeFromQueue(p2);
   p1.partner = p2;
   p2.partner = p1;
+  p1.weapon = 0;
+  p2.weapon = 0;
   sendJson(p1, { type: "start", side: "T", rounds });
   sendJson(p2, { type: "start", side: "CT", rounds });
 }
@@ -93,6 +95,7 @@ wss.on("connection", (ws) => {
   ws.partner = null;
   ws.lobbyCode = null;
   ws.nick = "Player";
+  ws.weapon = 0;
 
   ws.on("pong", () => {
     ws.isAlive = true;
@@ -220,9 +223,66 @@ wss.on("connection", (ws) => {
       return;
     }
 
-    if (type === "hello" || type === "state" || type === "shoot" || type === "hit") {
+    if (type === "weapon") {
+      const slot = Number(data.slot) === 1 ? 1 : 0;
+      ws.weapon = slot;
       if (ws.partner && ws.partner.readyState === 1) {
-        ws.partner.send(raw.toString());
+        sendJson(ws.partner, { type: "weapon", slot });
+      }
+      return;
+    }
+
+    if (type === "hello") {
+      ws.nick = String(data.nick || ws.nick).slice(0, 16);
+      ws.weapon = Number(data.weapon) === 1 ? 1 : 0;
+      if (ws.partner && ws.partner.readyState === 1) {
+        sendJson(ws.partner, { type: "hello", nick: ws.nick, weapon: ws.weapon });
+      }
+      return;
+    }
+
+    if (type === "state") {
+      if (data.weapon !== undefined) {
+        ws.weapon = Number(data.weapon) === 1 ? 1 : 0;
+      }
+      if (ws.partner && ws.partner.readyState === 1) {
+        sendJson(ws.partner, {
+          type: "state",
+          x: Number(data.x || 0),
+          y: Number(data.y || 0),
+          z: Number(data.z || 0),
+          yaw: Number(data.yaw || 0),
+          weapon: ws.weapon,
+          moving: Boolean(data.moving),
+          air: Boolean(data.air),
+          fall: Boolean(data.fall),
+          crouch: Boolean(data.crouch),
+        });
+      }
+      return;
+    }
+
+    if (type === "shoot") {
+      const weapon = data.weapon !== undefined ? (Number(data.weapon) === 1 ? 1 : 0) : ws.weapon;
+      ws.weapon = weapon;
+      if (ws.partner && ws.partner.readyState === 1) {
+        sendJson(ws.partner, {
+          type: "shoot",
+          weapon,
+          ax: Number(data.ax || 0),
+          ay: Number(data.ay || 0),
+          az: Number(data.az || 0),
+          bx: Number(data.bx || 0),
+          by: Number(data.by || 0),
+          bz: Number(data.bz || 0),
+        });
+      }
+      return;
+    }
+
+    if (type === "hit") {
+      if (ws.partner && ws.partner.readyState === 1) {
+        sendJson(ws.partner, { type: "hit", dmg: Number(data.dmg || 0) });
       }
     }
   });
