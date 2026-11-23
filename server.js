@@ -1,4 +1,6 @@
 const http = require("http");
+const fs = require("fs");
+const path = require("path");
 const { WebSocketServer } = require("ws");
 
 const PORT = process.env.PORT || 8080;
@@ -10,12 +12,91 @@ const MODE_LIMITS = {
   "5v5": 10,
 };
 
+const MIME_TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "application/javascript; charset=utf-8",
+  ".wasm": "application/wasm",
+  ".pck": "application/octet-stream",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".css": "text/css; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+};
+
+const BLOCKED_FILES = new Set([
+  "server.js",
+  "package.json",
+  "package-lock.json",
+]);
+
 const lobbies = new Map();
 const quickQueue = [];
 
 const server = http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
-  res.end("OK");
+  const urlPath = (req.url || "/").split("?")[0];
+
+  if (urlPath === "/health") {
+    res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("OK");
+    return;
+  }
+
+  let relPath = decodeURIComponent(urlPath).replace(/^\/+/, "");
+  if (relPath === "") {
+    if (fs.existsSync(path.join(__dirname, "GodotShooter.html"))) {
+      relPath = "GodotShooter.html";
+    } else if (fs.existsSync(path.join(__dirname, "index.html"))) {
+      relPath = "index.html";
+    } else {
+      res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("OK");
+      return;
+    }
+  }
+
+  const baseName = path.basename(relPath).toLowerCase();
+  if (
+    relPath.includes("..") ||
+    baseName.startsWith(".") ||
+    BLOCKED_FILES.has(baseName)
+  ) {
+    res.writeHead(403, { "Content-Type": "text/plain; charset=utf-8" });
+    res.end("Forbidden");
+    return;
+  }
+
+  const filePath = path.join(__dirname, relPath);
+  fs.stat(filePath, (err, stat) => {
+    if (err || !stat.isFile()) {
+      res.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
+      res.end("Not Found");
+      return;
+    }
+
+    const ext = path.extname(filePath).toLowerCase();
+    const contentType = MIME_TYPES[ext] || "application/octet-stream";
+
+    res.writeHead(200, {
+      "Content-Type": contentType,
+      "Content-Length": stat.size,
+      "Cross-Origin-Opener-Policy": "same-origin",
+      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Resource-Policy": "same-origin",
+      "Cache-Control": ext === ".html" ? "no-cache" : "public, max-age=3600",
+    });
+
+    const stream = fs.createReadStream(filePath);
+    stream.on("error", () => {
+      if (!res.headersSent) {
+        res.writeHead(500);
+      }
+      res.end();
+    });
+    stream.pipe(res);
+  });
 });
 
 const wss = new WebSocketServer({ server });
